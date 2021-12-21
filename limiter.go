@@ -17,20 +17,27 @@ type client struct {
 type Limiter struct {
 	wg      *sync.WaitGroup
 	mu      *sync.RWMutex
-	r       rate.Limit // rate
-	b       int        // burst
+	rate    rate.Limit // rate
+	burst   int        // burst
+	ttl     time.Duration
 	clients map[string]*client
 	close   chan struct{}
 }
 
 // NewLimiter returns a new Limiter that allows events up to rate r and permits
 // bursts of at most b tokens.
-func NewLimiter(r float64, b int) *Limiter {
+// if ttl equal or less then 1 minute, it will be set to 30 minutes
+func NewLimiter(r float64, b int, ttl time.Duration) *Limiter {
+	if ttl <= 1*time.Minute {
+		ttl = 1 * time.Minute
+	}
+
 	limiter := &Limiter{
 		wg:      &sync.WaitGroup{},
 		mu:      &sync.RWMutex{},
-		r:       rate.Limit(r),
-		b:       b,
+		rate:    rate.Limit(r),
+		burst:   b,
+		ttl:     ttl,
 		clients: map[string]*client{},
 		close:   make(chan struct{}, 1),
 	}
@@ -42,19 +49,18 @@ func NewLimiter(r float64, b int) *Limiter {
 
 // clean
 func (l *Limiter) clean() {
-	ticker := time.NewTicker(1 * time.Minute)
-
+	tik := time.NewTicker(1 * time.Minute)
 	//
 	for {
 		select {
 		case <-l.close:
 			l.wg.Done()
-			ticker.Stop()
+			tik.Stop()
 			return
-		case now := <-ticker.C:
+		case <-tik.C:
 			l.mu.RLock()
 			for ip, client := range l.clients {
-				if now.Sub(client.timestamp) > 10*time.Minute {
+				if time.Since(client.timestamp) > l.ttl {
 					delete(l.clients, ip)
 				}
 			}
@@ -63,8 +69,8 @@ func (l *Limiter) clean() {
 	}
 }
 
-// Get
-func (l *Limiter) Get(key string) *rate.Limiter {
+// Allow
+func (l *Limiter) Allow(key string) bool {
 	l.mu.RLock()
 	defer l.mu.RUnlock()
 	//
@@ -73,13 +79,13 @@ func (l *Limiter) Get(key string) *rate.Limiter {
 	// and return new limiter
 	if !found {
 		c = &client{
-			limit:     rate.NewLimiter(l.r, l.b),
+			limit:     rate.NewLimiter(l.rate, l.burst),
 			timestamp: time.Now(),
 		}
 		l.clients[key] = c
 	}
 
-	return c.limit
+	return c.limit.Allow()
 }
 
 // Close

@@ -1,6 +1,9 @@
 package valve
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
 
 func TestGet(t *testing.T) {
 	// TODO (twiny) implment case:
@@ -9,12 +12,10 @@ func TestGet(t *testing.T) {
 }
 
 func BenchmarkGet(b *testing.B) {
-	limiter := NewLimiter(10, 5)
+	limiter := NewLimiter(10, 5, 10*time.Minute)
 
 	for n := 0; n < b.N; n++ {
-		limit := limiter.Get("127.0.0.1")
-
-		if limit.Allow() {
+		if limiter.Allow("127.0.0.1") {
 			continue
 		}
 	}
